@@ -1,0 +1,104 @@
+#!/bin/bash
+
+ARCH=$(uname -m)
+
+if [[ -z $1 ]]; then
+	echo "Please provide a package name"
+	echo "Usage:"
+	echo "$0 \$PACKAGE"
+	exit 1
+fi
+
+# If a chroot already exists, use that
+if [[ -d ./chroot/root.${ARCH}/ ]]; then
+	cd ./chroot/
+	sudo mount --bind ./root.${ARCH}/ ./root.${ARCH}/
+	sudo ./root.${ARCH}/usr/bin/arch-chroot ./root.${ARCH}/ /usr/bin/chroot-script.sh $1
+	cd ../
+	sync
+	sleep 5
+	sudo umount ./chroot/root.${ARCH}/
+	sudo mv ./chroot/root.${ARCH}/out/$1 ./
+	sudo mv ./chroot/root.${ARCH}/out/*.AppImage ./
+	sudo chown $USER:$USER ./$1 ./*.AppImage
+	exit
+fi
+
+# x86_64 only for chroot setup
+if [[ "${ARCH}" != "x86_64" ]]; then
+	echo "Only x86_64 is supported for chroot! (Other architectures may work, but the REPO url must be replaced)"
+	exit 1
+fi
+
+# Set repo and mirrorlist
+# REPO="https://mirror.rackspace.com/archlinux/iso/latest/"
+REPO="https://mirror.rackspace.com/archlinux/iso/latest/"
+MIRRORLIST="https://archlinux.org/mirrorlist/?country=all&protocol=https&ip_version=4&use_mirror_status=on"
+
+# Make chroot directory 
+mkdir -p ./chroot/
+cd ./chroot/
+
+# Get latest archlinux bootstrap tarball version
+rm md5sums.txt
+wget "${REPO}md5sums.txt"
+FILENAME=$(cat md5sums.txt | grep bootstrap | grep "${ARCH}" | cut -d " " -f 3)
+cat md5sums.txt | grep bootstrap | grep "${ARCH}" > "${FILENAME}.md5sum"
+
+# Download and verify the tarball
+wget "${REPO}${FILENAME}"
+
+md5sum -c "${FILENAME}.md5sum"
+if [[ $? != "0" ]]; then
+	# Something went wrong checking the tarball MD5
+	echo "MD5 Hash does not match, exiting..."
+	exit 1
+fi
+
+# Extract the tarball
+sudo tar -xzf ${FILENAME} --numeric-owner
+# And recursive bind the chroot
+sudo mount --bind ./root.${ARCH}/ ./root.${ARCH}/
+
+# Copy arch-deployer to chroot
+which arch-deployer
+if [[ $? == 0 ]]; then
+	sudo cp $(which arch-deployer) ./root.${ARCH}/usr/bin/
+	sudo cp $(which arch-deployer-setup-chroot) ./root.${ARCH}/usr/bin/
+else
+	sudo cp ../arch-deployer ./root.${ARCH}/usr/bin/
+	sudo cp ../arch-deployer-setup-chroot ./root.${ARCH}/usr/bin/
+fi
+
+# Set up mirrorlist
+wget "${MIRRORLIST}" -O mirrorlist
+sed -i 's/^#Server/Server/g' ./mirrorlist
+sudo cp ./mirrorlist ./root.${ARCH}/etc/pacman.d/mirrorlist
+
+# Set up script to run within chroot
+cat > ./chroot-script.sh <<\EOF
+#!/bin/bash
+pacman-key --init
+pacman-key --populate archlinux
+pacman -Syyu --noconfirm --needed pacman-contrib fuse wget base-devel sudo
+mkdir /out
+cd /out
+arch-deployer $1
+EOF
+
+chmod +x ./chroot-script.sh
+sudo cp ./chroot-script.sh ./root.${ARCH}/usr/bin/
+
+# Use arch-chroot tool included in tarball to chroot
+sudo ./root.${ARCH}/usr/bin/arch-chroot ./root.${ARCH}/ /usr/bin/chroot-script.sh $1
+
+cd ../
+# Unmount chroot
+sync
+sleep 5
+sudo umount -R ./chroot/root.${ARCH}/
+
+# Get directory from chroot
+sudo mv ./chroot/root.${ARCH}/out/$1 ./
+sudo mv ./chroot/root.${ARCH}/out/*.AppImage ./
+sudo chown $USER:$USER ./$1 ./*.AppImage
