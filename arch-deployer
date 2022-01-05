@@ -45,7 +45,7 @@ sudo rm -rf ./${PKG}.AppDir
 mv ./rootfs/ ./${PKG}.AppDir
 
 # Download or compile libunionpreload (Prebuilt binary is only for x86_64)
-if [[ $(uname -m) = "x86" ]]; then
+if [[ $(uname -m) = "x86_64" ]]; then
 	wget https://github.com/project-portable/libunionpreload/releases/download/amd64/libunionpreload.so
 	chmod a+x libunionpreload.so
 else
